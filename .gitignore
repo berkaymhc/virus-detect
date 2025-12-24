@@ -1,0 +1,13 @@
+# Gizli Anahtarlar
+.env
+
+# Python Gereksizleri
+__pycache__/
+*.pyc
+
+# Log Dosyaları
+*.log
+*.txt
+
+# IDE Ayarları (VS Code kullanıyorsan)
+.vscode/
