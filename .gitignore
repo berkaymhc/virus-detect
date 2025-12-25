@@ -1,13 +1,23 @@
-# Gizli Anahtarlar
+# --- GIZLI VE OZEL DOSYALAR ---
 .env
-
-# Python Gereksizleri
 __pycache__/
 *.pyc
 
-# Log Dosyaları
+# --- LOGLAR ---
+# Sadece log dosyasini gizle, requirements.txt gorunsun
+sentinel_log.txt
 *.log
-*.txt
 
-# IDE Ayarları (VS Code kullanıyorsan)
+# --- GEREKSIZ KLASORLER ---
+# EXE ciktilarini yukleme, sadece kaynak kod yuklenir
+build/
+dist/
+*.spec
+
+# --- KARANTINA ---
+# Yakalanan virusleri GitHub'a yukleme!
+Karantina/
+
+# --- IDE AYARLARI ---
 .vscode/
+.idea/
