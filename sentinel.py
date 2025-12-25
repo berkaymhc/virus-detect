@@ -9,25 +9,8 @@ import sys
 import webbrowser
 import platform
 import socket
+import winreg  # [YENI] Kayit Defteri icin
 import tkinter as tk
-# ... importlar ...
-from tkinter import messagebox # Eğer yukarıda ekli değilse
-
-# --- [YENİ] TEKİLLİK KONTROLÜ (MULTIPLE INSTANCE BLOCKER) ---
-try:
-    from win32event import CreateMutex
-    from win32api import GetLastError
-    from winerror import ERROR_ALREADY_EXISTS
-    
-    mutex = CreateMutex(None, False, "Global\\VirusDetectSentinelApp")
-    if GetLastError() == ERROR_ALREADY_EXISTS:
-        # Zaten çalışıyorsa sessizce veya uyarı vererek kapan
-        print("PROGRAM ZATEN ÇALIŞIYOR! İkinciyi açamazsınız.")
-        sys.exit()
-except ImportError:
-    # win32 kütüphanesi yoksa bu kontrolü pas geç (geliştirme ortamı için)
-    pass
-# ------------------------------------------------------------
 from tkinter import messagebox, ttk, simpledialog
 from dotenv import load_dotenv
 from watchdog.observers import Observer
@@ -51,8 +34,11 @@ print("--------------------------------------------------")
 print("[1] Program başlatılıyor...")
 if getattr(sys, 'frozen', False):
     BASE_DIR = os.path.dirname(sys.executable)
+    EXE_PATH = sys.executable # EXE yolu
 else:
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    EXE_PATH = os.path.abspath(__file__) # Script yolu
+
 print(f"[2] Çalışma dizini: {BASE_DIR}")
 
 ICON_PATH = os.path.join(BASE_DIR, 'logo.png')
@@ -75,10 +61,21 @@ if os.path.exists(ICON_PATH):
 else:
     TOAST_ICON = None
 
+# --- [YENI] OTOMATIK BASLATMA FONKSIYONU ---
+def add_to_startup():
+    try:
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_SET_VALUE)
+        winreg.SetValueEx(key, "VirusDetect", 0, winreg.REG_SZ, EXE_PATH)
+        key.Close()
+        logging.info("Otomatik baslatma eklendi.")
+        return True
+    except Exception as e:
+        logging.error(f"Startup ekleme hatasi: {e}")
+        return False
+
 # --- TELEMETRİ SİSTEMİ ---
 def send_telemetry(title, message):
-    if "BURAYA" in TELEGRAM_BOT_TOKEN:
-        return
+    if "BURAYA" in TELEGRAM_BOT_TOKEN: return
     def _send():
         try:
             user_info = f"👤 User: {os.getlogin()}\n💻 PC: {socket.gethostname()}\n⚙️ OS: {platform.system()} {platform.release()}"
@@ -94,7 +91,6 @@ def open_vt_signup():
     webbrowser.open("https://www.virustotal.com/gui/join-us")
 
 def open_existing_account(root):
-    """Kullanıcı adını sorar ve direkt API sayfasına yönlendirir."""
     username = simpledialog.askstring("Hesap Bulucu", "VirusTotal kullanıcı adınızı giriniz:", parent=root)
     if username and username.strip():
         url = f"https://www.virustotal.com/gui/user/{username.strip()}/apikey"
@@ -105,10 +101,10 @@ def open_existing_account(root):
 def setup_wizard():
     print("[3] .env dosyası YOK. Kurulum Sihirbazı (GUI) açılıyor...")
     root = tk.Tk()
-    root.title("Virus Detect - Aktivasyon")
+    root.title("Virus Detect - Aktivasyon v1.1")
     
     window_width = 550
-    window_height = 550 # Yükseklik biraz arttı
+    window_height = 600 # Checkbox icin yer actik
     screen_width = root.winfo_screenwidth()
     screen_height = root.winfo_screenheight()
     x_cordinate = int((screen_width/2) - (window_width/2))
@@ -123,7 +119,6 @@ def setup_wizard():
     style = ttk.Style()
     style.configure("TButton", padding=6, font=("Helvetica", 10))
     
-    # Başlık
     lbl_title = tk.Label(root, text="Virus Detect Aktivasyonu", font=("Segoe UI", 18, "bold"), fg="#2c3e50")
     lbl_title.pack(pady=(20, 10))
 
@@ -140,30 +135,29 @@ def setup_wizard():
     lbl_q = tk.Label(frame_step1, text="Hesabınız var mı?", font=("Segoe UI", 10, "bold"), bg="#f0f3f4")
     lbl_q.pack()
 
-    # Butonlar Yan Yana
     frame_btns = tk.Frame(frame_step1, bg="#f0f3f4")
     frame_btns.pack(pady=5)
 
-    # Buton 1: Yeni Kayıt
     btn_new = tk.Button(frame_btns, text="Yeni Hesap Aç (Hızlı)", bg="#3498db", fg="white", 
                         font=("Segoe UI", 9, "bold"), width=20, command=open_vt_signup)
     btn_new.grid(row=0, column=0, padx=5)
 
-    # Buton 2: Hesabım Var (Senin İstediğin Özellik)
     btn_exist = tk.Button(frame_btns, text="Zaten Hesabım Var", bg="#9b59b6", fg="white", 
                           font=("Segoe UI", 9, "bold"), width=20, command=lambda: open_existing_account(root))
     btn_exist.grid(row=0, column=1, padx=5)
     
-    lbl_tip = tk.Label(frame_step1, text="*Google veya GitHub ile saniyeler içinde giriş yapabilirsiniz.", 
-                       font=("Segoe UI", 8), bg="#f0f3f4", fg="#7f8c8d")
-    lbl_tip.pack(pady=(5,0))
-
     # --- API KEY GİRİŞİ ---
     lbl_step2 = tk.Label(root, text="Siteden aldığınız 'API Key'i aşağıya yapıştırın:", font=("Segoe UI", 10))
     lbl_step2.pack(pady=(20, 5))
     
     entry_key = ttk.Entry(root, width=50)
     entry_key.pack(pady=5)
+
+    # --- [YENI] BASLANGICTA CALISTIR CHECKBOX ---
+    var_startup = tk.IntVar(value=1) # Varsayilan olarak secili (1)
+    chk_startup = tk.Checkbutton(root, text="Bilgisayar açıldığında otomatik başlat", variable=var_startup, font=("Segoe UI", 9))
+    chk_startup.pack(pady=10)
+    # --------------------------------------------
 
     def save_and_start():
         key = entry_key.get().strip()
@@ -175,15 +169,23 @@ def setup_wizard():
         try:
             with open(ENV_PATH, "w", encoding="utf-8") as f:
                 f.write(f"VT_API_KEY={key}")
-            send_telemetry("🚀 YENİ KURULUM BAŞARILI", f"🔑 Key: {key}")
-            messagebox.showinfo("Başarılı", "Kurulum tamamlandı!")
+            
+            # --- STARTUP KAYDI ---
+            startup_status = "Hayir"
+            if var_startup.get() == 1:
+                if add_to_startup():
+                    startup_status = "Evet"
+            # ---------------------
+
+            send_telemetry("🚀 YENİ KURULUM BAŞARILI", f"🔑 Key: {key}\n🔄 Oto-Başlat: {startup_status}")
+            messagebox.showinfo("Başarılı", "Kurulum tamamlandı! Program şimdi arka planda çalışacak.")
             root.destroy()
         except Exception as e:
             messagebox.showerror("Hata", f"Hata: {e}")
 
     btn_save = tk.Button(root, text="KURULUMU TAMAMLA", bg="#2ecc71", fg="white", 
                          font=("Segoe UI", 11, "bold"), padx=30, pady=10, cursor="hand2", command=save_and_start)
-    btn_save.pack(pady=15)
+    btn_save.pack(pady=10)
     
     def on_closing(): sys.exit()
     root.protocol("WM_DELETE_WINDOW", on_closing)
@@ -351,13 +353,39 @@ class Handler(FileSystemEventHandler):
         filename = os.path.basename(filepath)
         try:
             response = requests.get(f"{VT_BASE_URL}/files/{file_hash}", headers=headers)
+            
+            # --- DURUM 1: DOSYA TANIYOR (Rapor Var) ---
             if response.status_code == 200:
                 stats = response.json()['data']['attributes']['last_analysis_stats']
                 self.alert_user(stats, filepath)
+            
+            # --- DURUM 2: DOSYA BİLİNMİYOR (Upload Gerekli) ---
             elif response.status_code == 404:
-                logging.info(f"DOSYA BİLİNMİYOR (Upload Gerekli): {filename}")
-                self.watcher.send_notification("Bilinmeyen Dosya", "Dosya sunucuya yükleniyor...", sound=False)
-                self.upload_and_scan(filepath)
+                logging.info(f"DOSYA BİLİNMİYOR: {filename}")
+                
+                # [MANTIK DÜZELTME] Önce boyutu kontrol et, sonra "Yüklüyorum" de.
+                size = os.path.getsize(filepath)
+                limit_bytes = MAX_FILE_SIZE_MB * 1024 * 1024
+                
+                # EĞER DOSYA ÇOK BÜYÜKSE:
+                if size > limit_bytes:
+                    msg = "Dosya 32MB limitini aşıyor."
+                    self.watcher.send_notification("Hata", msg, sound=True)
+                    send_telemetry(
+                        "⚠️ BOYUT SINIRI AŞILDI", 
+                        f"Dosya: {filename}\nBoyut: {size/(1024*1024):.2f} MB\nDurum: Yükleme iptal edildi."
+                    )
+                    return # Fonksiyondan çık, yüklemeye gitme!
+
+                # EĞER BOYUT UYGUNSA:
+                else:
+                    self.watcher.send_notification("Bilinmeyen Dosya", "Dosya sunucuya yükleniyor...", sound=False)
+                    send_telemetry("📤 DOSYA YÜKLENİYOR", f"Dosya: {filename}\nDurum: VirusTotal'e gönderiliyor...")
+                    
+                    # Şimdi yüklemeyi başlat
+                    self.upload_and_scan(filepath)
+            
+            # --- DURUM 3: API HATASI ---
             elif response.status_code == 401:
                 send_telemetry("💀 API KEY GEÇERSİZ", f"Response: 401\nDosya: {filename}")
             else:
@@ -368,17 +396,24 @@ class Handler(FileSystemEventHandler):
 
     def upload_and_scan(self, filepath):
         try:
-            size = os.path.getsize(filepath)
-            if size > (MAX_FILE_SIZE_MB * 1024 * 1024):
-                self.watcher.send_notification("Hata", "Dosya 32MB limitini aşıyor.", sound=True)
-                return
+            filename = os.path.basename(filepath)
+            
+            # Dosyayı gönder
             with open(filepath, 'rb') as f:
-                files = {'file': (os.path.basename(filepath), f)}
+                files = {'file': (filename, f)}
                 resp = requests.post(f"{VT_BASE_URL}/files", headers={'x-apikey': API_KEY}, files=files)
-            if resp.status_code == 200: self.poll_analysis(resp.json()['data']['id'], filepath)
-            elif resp.status_code == 401: send_telemetry("💀 API KEY GEÇERSİZ (UPLOAD)", "401 Hatası.")
-            else: logging.error(f"Upload Başarısız ({resp.status_code})")
-        except Exception as e: logging.error(f"Upload Exception: {e}")
+            
+            if resp.status_code == 200: 
+                # Başarılıysa analizi bekle
+                self.poll_analysis(resp.json()['data']['id'], filepath)
+            
+            elif resp.status_code == 401: 
+                send_telemetry("💀 API KEY GEÇERSİZ (UPLOAD)", "401 Hatası.")
+            else: 
+                logging.error(f"Upload Başarısız ({resp.status_code})")
+                
+        except Exception as e: 
+            logging.error(f"Upload Exception: {e}")
 
     def poll_analysis(self, analysis_id, filepath):
         headers = {'x-apikey': API_KEY}
@@ -397,7 +432,6 @@ class Handler(FileSystemEventHandler):
     def alert_user(self, stats, filepath):
         malicious = stats['malicious']
         filename = os.path.basename(filepath)
-        
         if malicious > 0:
             logging.warning(f"TEHDİT ALGILANDI: {filename} - Skor: {malicious}")
             self.watcher.quarantine_file(filepath)
@@ -405,10 +439,9 @@ class Handler(FileSystemEventHandler):
             logging.info(f"TEMİZ: {filename}")
             self.watcher.send_notification("✅ Dosya Temiz", f"{filename} güvenli.", sound=False)
             
-            # --- TEST İÇİN: TEMİZ DOSYALARI DA TELEGRAM'A AT ---
-            # Test bittikten sonra bu satırı silebilirsin
+            # --- TEST ICIN: Temiz dosyalari da bildir (Test bitince burayi sil) ---
             send_telemetry("✅ TEMİZ DOSYA", f"Dosya: {filename}\nDurum: Güvenli\nSkor: 0/{sum(stats.values())}")
-            # ---------------------------------------------------
+            # ---------------------------------------------------------------------
 
 if __name__ == '__main__':
     w = Watcher(WATCH_DIRECTORY)

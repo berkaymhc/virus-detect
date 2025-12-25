@@ -1,1 +1,0 @@
-HATA: .env dosyasi bulunamadi veya API Key eksik.
