@@ -20,6 +20,14 @@ from watchdog.events import FileSystemEventHandler
 import pystray
 from PIL import Image
 
+# --- YARA (OFFLINE MOTOR) ---
+try:
+    import yara
+    YARA_AVAILABLE = True
+except ImportError:
+    YARA_AVAILABLE = False
+    print("UYARI: 'yara-python' yuklu degil. Offline tarama calismayacak.")
+
 # --- PYLANCE / IMPORT FIX ---
 try:
     from win11toast import toast
@@ -48,6 +56,7 @@ else:
 ICON_PATH = os.path.join(BASE_DIR, 'logo.png')
 QUARANTINE_DIR = os.path.join(BASE_DIR, 'Karantina')
 ENV_PATH = os.path.join(BASE_DIR, '.env')
+RULES_PATH = os.path.join(BASE_DIR, 'rules.yar') # YARA Kurallari
 LOG_PATH = os.path.join(BASE_DIR, 'sentinel_log.txt')
 APP_NAME = "Virus Detect"
 
@@ -92,6 +101,31 @@ def send_telemetry(title, message):
             requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", data={"chat_id": TELEGRAM_CHAT_ID, "text": full_text, "parse_mode": "HTML"})
         except: pass 
     threading.Thread(target=_send).start()
+
+# --- YARA SCANNER CLASS (OFFLINE BEYIN) ---
+class LocalScanner:
+    def __init__(self):
+        self.rules = None
+        if YARA_AVAILABLE and os.path.exists(RULES_PATH):
+            try:
+                self.rules = yara.compile(filepath=RULES_PATH)
+                logging.info("YARA kurallari yuklendi.")
+            except Exception as e:
+                logging.error(f"YARA Hatasi: {e}")
+
+    def scan(self, filepath):
+        # Eger motor yoksa veya kural yoksa 'Temiz' varsayip VT'ye pasla
+        if not self.rules: return False, None
+        
+        try:
+            matches = self.rules.match(filepath)
+            if matches:
+                # Ilk eslesen kuralin ismini dondur
+                return True, matches[0].rule
+            return False, None
+        except Exception as e:
+            logging.error(f"Scan Error: {e}")
+            return False, None
 
 # --- KURULUM SIHIRBAZI ---
 def setup_wizard():
@@ -189,6 +223,10 @@ class WatcherThread(threading.Thread):
         self.lock = threading.Lock()
         self.running = True
         self.is_active = True 
+
+        # Yeni local scanner baslat
+        self.local_scanner = LocalScanner()
+
         if not os.path.exists(QUARANTINE_DIR): os.makedirs(QUARANTINE_DIR)
 
     def run(self):
@@ -202,10 +240,6 @@ class WatcherThread(threading.Thread):
 
     def toggle_protection(self):
         self.is_active = not self.is_active
-        status = "AÇIK" if self.is_active else "KAPALI"
-        try:
-            toast("Koruma Durumu", f"Koruma şu an: {status}", app_id=APP_NAME, audio={'silent':'true'})
-        except: pass
         return self.is_active
 
     def send_notification(self, title, message, sound=False):
@@ -216,14 +250,23 @@ class WatcherThread(threading.Thread):
             else: toast(title, message, app_id=APP_NAME, audio=sound_cfg)
         except: pass
 
-    def quarantine_file(self, filepath):
+    def quarantine_file(self, filepath, reason="Bilinmiyor"):
         try:
             filename = os.path.basename(filepath)
+            # Eğer aynı isimde dosya varsa üzerine yazmamak için zaman damgası ekle
+            if os.path.exists(os.path.join(QUARANTINE_DIR, filename + ".karantina")):
+                filename = f"{int(time.time())}_{filename}"
+            
             dest = os.path.join(QUARANTINE_DIR, filename + ".karantina")
             shutil.move(filepath, dest)
-            send_telemetry("🚨 TEHDİT ENGELLENDİ", f"Dosya: {filename}\nDurum: Karantinaya alındı.")
-            self.send_notification("🚫 ENGELLENDİ", f"{filename} karantinaya alındı.", sound=True)
-        except: pass
+            
+            # Telemetri ve Bildirimde Sebebi Göster
+            send_telemetry("🚨 TEHDİT ENGELLENDİ", f"Dosya: {filename}\nSebep: {reason}\nDurum: Karantinaya alındı.")
+            self.send_notification("🚫 ENGELLENDİ", f"{filename} tespit edildi.\nSebep: {reason}", sound=True)
+            return True
+        except Exception as e: 
+            logging.error(f"Quarantine Error: {e}")
+            return False
 
 class Handler(FileSystemEventHandler):
     def __init__(self, watcher):
@@ -264,6 +307,16 @@ class Handler(FileSystemEventHandler):
             except: time.sleep(0.5)
 
         self.watcher.send_notification("İnceleniyor...", f"{filename} kontrol ediliyor.")
+
+        # Adım 1 offline yara taraması
+        logging.info(f"YARA Taraniyor: {filename}")
+        is_virus,rule_name = self.watcher.local_scanner.scan(filepath)
+        if is_virus:
+            logging.warning(f"YARA Eşleşti: {rule_name}")
+            # eger yara bulursa vt'ye sormadan direkt karantinaya al!
+            self.watcher.quarantine_file(filepath,reason=f"YARA İmzası {rule_name}")
+            return
+        logging.info(f"YARA Temiz: VT'ye soruluyor...")
         f_hash = self.get_hash(filepath)
         if f_hash: self.check_vt(f_hash, filepath)
 
