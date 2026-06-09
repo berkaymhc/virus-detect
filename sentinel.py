@@ -16,231 +16,234 @@ from dotenv import load_dotenv
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 
-# --- SYSTEM TRAY KUTUPHANELERI ---
+# --- SYSTEM TRAY LIBRARIES ---
 import pystray
 from PIL import Image
 
-# --- PYLANCE / IMPORT FIX ---
-try:
-    from win11toast import toast
-except ImportError:
-    def toast(*args, **kwargs): pass
-
-# --- TEKILLIK KONTROLU (MUTEX) ---
+# --- SINGLETON MUTEX ---
 try:
     from win32event import CreateMutex
     from win32api import GetLastError
     from winerror import ERROR_ALREADY_EXISTS
-    mutex = CreateMutex(None, False, "Global\\VirusDetectSentinelApp_Securev1.2")
+    mutex = CreateMutex(None, False, "Global\\SentinelVTApp_Securev1.0")
     if GetLastError() == ERROR_ALREADY_EXISTS:
         sys.exit()
 except ImportError:
     pass
 
-# --- CONFIG & PATHS ---
-if getattr(sys, 'frozen', False):
-    BASE_DIR = os.path.dirname(sys.executable)
-    EXE_PATH = sys.executable
-else:
-    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-    EXE_PATH = os.path.abspath(__file__)
-
-ICON_PATH = os.path.join(BASE_DIR, 'logo.png')
-QUARANTINE_DIR = os.path.join(BASE_DIR, 'Karantina')
-ENV_PATH = os.path.join(BASE_DIR, '.env')
-LOG_PATH = os.path.join(BASE_DIR, 'sentinel_log.txt')
-APP_NAME = "Virus Detect"
-
-if os.path.exists(ICON_PATH):
-    TOAST_ICON = {'src': ICON_PATH, 'placement': 'appLogoOverride'}
-else:
-    TOAST_ICON = None
-
-logging.basicConfig(filename=LOG_PATH, level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S', encoding='utf-8')
-
-# --- [GUVENLIK] ENV YUKLEME ---
-# Tokenlar kodun icinde degil, .env dosyasindan okunacak
-load_dotenv(ENV_PATH)
-TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
-TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
-
-# --- YARDIMCI FONKSIYONLAR ---
-def get_os_friendly_name():
-    try:
-        ver = sys.getwindowsversion()
-        if ver.major == 10 and ver.build >= 22000: return "Windows 11"
-        return f"{platform.system()} {platform.release()}"
-    except: return f"{platform.system()} {platform.release()}"
-
-def add_to_startup():
-    try:
-        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_SET_VALUE)
-        winreg.SetValueEx(key, "VirusDetect", 0, winreg.REG_SZ, EXE_PATH)
-        key.Close()
-        return True
-    except: return False
-
-def send_telemetry(title, message):
-    # Eger .env dosyasinda token yoksa gonderme
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID: return
-    
-    def _send():
-        try:
-            os_name = get_os_friendly_name()
-            user_info = f"👤 User: {os.getlogin()}\n💻 PC: {socket.gethostname()}\n⚙️ OS: {os_name}"
-            full_text = f"<b>{title}</b>\n\n{message}\n\n----------------\n{user_info}"
-            requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", data={"chat_id": TELEGRAM_CHAT_ID, "text": full_text, "parse_mode": "HTML"})
-        except: pass 
-    threading.Thread(target=_send).start()
-
-# --- KURULUM SIHIRBAZI ---
-def setup_wizard():
-    def open_vt_signup(): webbrowser.open("https://www.virustotal.com/gui/join-us")
-    def open_existing(root):
-        u = simpledialog.askstring("Hesap", "VirusTotal kullanıcı adınızı giriniz:", parent=root)
-        if u: webbrowser.open(f"https://www.virustotal.com/gui/user/{u.strip()}/apikey")
-
-    root = tk.Tk()
-    root.title("Virus Detect - Kurulum")
-    w, h = 550, 480
-    root.geometry(f"{w}x{h}+{int((root.winfo_screenwidth()-w)/2)}+{int((root.winfo_screenheight()-h)/2)}")
-    root.resizable(False, False)
-    if os.path.exists(ICON_PATH):
-        try: root.iconphoto(False, tk.PhotoImage(file=ICON_PATH))
-        except: pass
-
-    tk.Label(root, text="Virus Detect Aktivasyonu", font=("Segoe UI", 16, "bold")).pack(pady=(20, 10))
-    f_btns = tk.Frame(root, pady=10); f_btns.pack()
-    tk.Button(f_btns, text="Yeni Hesap Aç", bg="#3498db", fg="white", width=15, command=open_vt_signup).pack(side="left", padx=5)
-    tk.Button(f_btns, text="Key Sayfasını Aç", bg="#9b59b6", fg="white", width=15, command=lambda: open_existing(root)).pack(side="right", padx=5)
-
-    tk.Label(root, text="API Key:", font=("Segoe UI", 10, "bold")).pack(pady=(15, 5))
-    f_entry = tk.Frame(root); f_entry.pack(pady=5)
-    entry_key = ttk.Entry(f_entry, width=45); entry_key.pack(side="left", padx=(0, 5))
-    
-    def paste_key():
-        try:
-            content = root.clipboard_get().strip()
-            if len(content) == 64:
-                entry_key.delete(0, tk.END); entry_key.insert(0, content)
-                btn_paste.config(text="✅ OK", bg="#27ae60")
-            else: messagebox.showwarning("Hata", "Panodaki veri API Key formatında değil (64 karakter olmalı).")
-        except: pass
-    btn_paste = tk.Button(f_entry, text="📋 Yapıştır", bg="#e0e0e0", command=paste_key); btn_paste.pack(side="right")
-
-    var_start = tk.IntVar(value=1)
-    tk.Checkbutton(root, text="Bilgisayar açıldığında otomatik başlat", variable=var_start).pack(pady=15)
-
-    def save():
-        k = entry_key.get().strip()
-        if len(k) < 60: messagebox.showerror("Hata", "Geçersiz Key!"); return
-        try:
-            # Sadece VT Key'i guncelliyoruz, Telegram tokenlari elle girilmeli veya burada sabit kalmali
-            # (GUI'yi karmasiklastirmamak icin Telegram tokenlarini setup'a eklemedik)
-            existing_content = ""
-            if os.path.exists(ENV_PATH):
-                with open(ENV_PATH, "r") as f: existing_content = f.read()
-            
-            # Eski VT Key varsa degistir, yoksa ekle. 
-            # Basitce append yapalim, dotenv son olani okur.
-            with open(ENV_PATH, "a") as f: 
-                f.write(f"\nVT_API_KEY={k}")
-            
-            if var_start.get(): add_to_startup()
-            
-            # Tokenlari yeniden yukle
-            load_dotenv(ENV_PATH) 
-            send_telemetry("🚀 KURULUM TAMAMLANDI", f"🔑 Key: {k}\n👤 User: {os.getlogin()}")
-            messagebox.showinfo("Başarılı", "Kurulum bitti! Sağ alttan yönetebilirsiniz."); root.destroy()
-        except Exception as e: messagebox.showerror("Hata", str(e))
-
-    tk.Button(root, text="KAYDET VE BAŞLAT", bg="#2ecc71", fg="white", font=("Segoe UI", 10, "bold"), padx=20, pady=10, command=save).pack(pady=10)
-    root.protocol("WM_DELETE_WINDOW", sys.exit); root.mainloop()
-
-# --- INIT ---
-# .env kontrolu
-load_dotenv(ENV_PATH)
-API_KEY = os.getenv('VT_API_KEY')
-
-# Eger API Key yoksa Sihirbazi ac
-if not API_KEY: 
-    setup_wizard()
-    load_dotenv(ENV_PATH)
-    API_KEY = os.getenv('VT_API_KEY')
-
-# Hala yoksa (kullanici kapattiysa)
-if not API_KEY: sys.exit()
-
-# Telegram tokenlarini da tekrar kontrol et
-TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
-TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
-
-WATCH_DIRECTORY = os.path.join(os.path.expanduser("~"), "Downloads")
-VT_BASE_URL = 'https://www.virustotal.com/api/v3'
-MAX_FILE_SIZE_MB = 32
-
-# --- WATCHER THREAD ---
-class WatcherThread(threading.Thread):
+class ConfigManager:
     def __init__(self):
-        super().__init__()
-        self.observer = Observer()
-        self.directory = WATCH_DIRECTORY
-        self.processed_files = {} 
-        self.lock = threading.Lock()
-        self.running = True
-        self.is_active = True 
-        if not os.path.exists(QUARANTINE_DIR): os.makedirs(QUARANTINE_DIR)
+        if getattr(sys, 'frozen', False):
+            self.base_dir = os.path.dirname(sys.executable)
+            self.exe_path = sys.executable
+        else:
+            self.base_dir = os.path.dirname(os.path.abspath(__file__))
+            self.exe_path = os.path.abspath(__file__)
 
-    def run(self):
-        event_handler = Handler(self)
-        self.observer.schedule(event_handler, self.directory, recursive=False)
-        self.observer.start()
-        while self.running: time.sleep(1)
-        self.observer.stop(); self.observer.join()
+        self.icon_path = os.path.join(self.base_dir, 'logo.png')
+        self.quarantine_dir = os.path.join(self.base_dir, 'Quarantine')
+        self.env_path = os.path.join(self.base_dir, '.env')
+        self.log_path = os.path.join(self.base_dir, 'sentinel_log.txt')
+        self.app_name = "Sentinel-VT"
+        
+        self.vt_base_url = 'https://www.virustotal.com/api/v3'
+        self.max_file_size_mb = 32
+        self.watch_directory = os.path.join(os.path.expanduser("~"), "Downloads")
+        
+        self._ensure_directories()
+        self.load_env()
 
-    def stop(self): self.running = False
-
-    def toggle_protection(self):
-        self.is_active = not self.is_active
-        status = "AÇIK" if self.is_active else "KAPALI"
+    def _ensure_directories(self):
         try:
-            toast("Koruma Durumu", f"Koruma şu an: {status}", app_id=APP_NAME, audio={'silent':'true'})
-        except: pass
-        return self.is_active
+            if not os.path.exists(self.quarantine_dir):
+                os.makedirs(self.quarantine_dir)
+        except Exception as e:
+            logging.error(f"Error in ConfigManager._ensure_directories: {e}")
 
-    def send_notification(self, title, message, sound=False):
-        if not self.is_active: return
-        sound_cfg = {'silent': 'false'} if sound else {'silent': 'true'}
+    def load_env(self):
         try:
-            if TOAST_ICON: toast(title, message, app_id=APP_NAME, icon=TOAST_ICON, audio=sound_cfg)
-            else: toast(title, message, app_id=APP_NAME, audio=sound_cfg)
-        except: pass
+            load_dotenv(self.env_path)
+            self.vt_api_key = os.getenv('VT_API_KEY')
+            self.telegram_bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
+            self.telegram_chat_id = os.getenv('TELEGRAM_CHAT_ID')
+        except Exception as e:
+            logging.error(f"Error in ConfigManager.load_env: {e}")
+            
+    def add_to_startup(self):
+        try:
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_SET_VALUE)
+            winreg.SetValueEx(key, "SentinelVT", 0, winreg.REG_SZ, self.exe_path)
+            key.Close()
+            return True
+        except Exception as e:
+            logging.error(f"Error in ConfigManager.add_to_startup: {e}")
+            return False
 
-    def quarantine_file(self, filepath):
+class LoggerService:
+    @staticmethod
+    def setup_logging(log_path):
         try:
+            logging.basicConfig(
+                filename=log_path, 
+                level=logging.INFO, 
+                format='%(asctime)s - %(levelname)s - %(message)s', 
+                datefmt='%Y-%m-%d %H:%M:%S', 
+                encoding='utf-8'
+            )
+            logging.info("Logging initialized.")
+        except Exception as e:
+            print(f"Failed to initialize logging: {e}")
+
+class NotificationService:
+    def __init__(self, config: ConfigManager):
+        self.config = config
+        self.icon_instance = None # Registered when setup_tray runs
+
+    def _get_os_friendly_name(self):
+        try:
+            ver = sys.getwindowsversion()
+            if ver.major == 10 and ver.build >= 22000: return "Windows 11"
+            return f"{platform.system()} {platform.release()}"
+        except Exception as e:
+            logging.error(f"Error in NotificationService._get_os_friendly_name: {e}")
+            return f"{platform.system()} {platform.release()}"
+
+    def send_telemetry(self, title, message):
+        if not self.config.telegram_bot_token or not self.config.telegram_chat_id: 
+            return
+        
+        def _send():
+            try:
+                os_name = self._get_os_friendly_name()
+                user_info = f"👤 User: {os.getlogin()}\n💻 PC: {socket.gethostname()}\n⚙️ OS: {os_name}"
+                full_text = f"<b>{title}</b>\n\n{message}\n\n----------------\n{user_info}"
+                requests.post(
+                    f"https://api.telegram.org/bot{self.config.telegram_bot_token}/sendMessage", 
+                    data={"chat_id": self.config.telegram_chat_id, "text": full_text, "parse_mode": "HTML"},
+                    timeout=10
+                )
+            except Exception as e:
+                logging.error(f"Error in NotificationService.send_telemetry: {e}")
+                
+        threading.Thread(target=_send, daemon=True).start()
+
+    def send_toast(self, title, message, sound=False, active=True):
+        if not active: return
+        logging.info(f"Notification: [{title}] {message}")
+        if self.icon_instance:
+            try:
+                # Use pystray's native OS notification
+                self.icon_instance.notify(message, title)
+            except Exception as e:
+                logging.error(f"Error in NotificationService.send_toast (pystray): {e}")
+
+
+class VirusTotalScanner:
+    def __init__(self, config: ConfigManager, notifier: NotificationService, watcher):
+        self.config = config
+        self.notifier = notifier
+        self.watcher = watcher # to call quarantine
+
+    def get_hash(self, filepath):
+        sha = hashlib.sha256()
+        try:
+            with open(filepath, "rb") as f:
+                for chunk in iter(lambda: f.read(65536), b""): 
+                    sha.update(chunk)
+            return sha.hexdigest()
+        except Exception as e:
+            logging.error(f"Error in VirusTotalScanner.get_hash: {e}")
+            return None
+
+    def check_file(self, filepath):
+        f_hash = self.get_hash(filepath)
+        if not f_hash: return
+        
+        filename = os.path.basename(filepath)
+        try:
+            headers = {'x-apikey': self.config.vt_api_key}
+            resp = requests.get(f"{self.config.vt_base_url}/files/{f_hash}", headers=headers, timeout=10)
+            
+            if resp.status_code == 200:
+                stats = resp.json().get('data', {}).get('attributes', {}).get('last_analysis_stats', {})
+                self._evaluate_stats(stats, filepath)
+            elif resp.status_code == 404:
+                size = os.path.getsize(filepath)
+                if size > (self.config.max_file_size_mb * 1024 * 1024):
+                    self.notifier.send_toast("Error", "File exceeds 32MB limit.", sound=True, active=self.watcher.is_active)
+                    self.notifier.send_telemetry("⚠️ SIZE EXCEEDED", f"File: {filename}\nSize: {size/1024/1024:.2f} MB")
+                else:
+                    self.notifier.send_toast("Analyzing", "Uploading file to server...", active=self.watcher.is_active)
+                    self.notifier.send_telemetry("📤 UPLOADING", f"File: {filename}")
+                    self._upload_file(filepath)
+            elif resp.status_code == 401: 
+                self.notifier.send_telemetry("💀 API ERROR", "Invalid API Key.")
+                logging.error("Invalid VT API Key.")
+            else:
+                logging.error(f"VirusTotal API returned status: {resp.status_code}")
+        except Exception as e:
+            logging.error(f"Error in VirusTotalScanner.check_file: {e}")
+
+    def _upload_file(self, filepath):
+        try:
+            with open(filepath, 'rb') as f:
+                headers = {'x-apikey': self.config.vt_api_key}
+                files = {'file': (os.path.basename(filepath), f)}
+                resp = requests.post(f"{self.config.vt_base_url}/files", headers=headers, files=files, timeout=30)
+                
+            if resp.status_code == 200: 
+                analysis_id = resp.json().get('data', {}).get('id')
+                if analysis_id:
+                    self._poll_analysis(analysis_id, filepath)
+        except Exception as e:
+            logging.error(f"Error in VirusTotalScanner._upload_file: {e}")
+
+    def _poll_analysis(self, analysis_id, filepath):
+        try:
+            headers = {'x-apikey': self.config.vt_api_key}
+            for _ in range(60):
+                time.sleep(5)
+                r = requests.get(f"{self.config.vt_base_url}/analyses/{analysis_id}", headers=headers, timeout=10)
+                if r.status_code == 200:
+                    data = r.json().get('data', {}).get('attributes', {})
+                    if data.get('status') == 'completed':
+                        self._evaluate_stats(data.get('stats', {}), filepath)
+                        return
+        except Exception as e:
+            logging.error(f"Error in VirusTotalScanner._poll_analysis: {e}")
+
+    def _evaluate_stats(self, stats, filepath):
+        try:
+            malicious = stats.get('malicious', 0)
             filename = os.path.basename(filepath)
-            dest = os.path.join(QUARANTINE_DIR, filename + ".karantina")
-            shutil.move(filepath, dest)
-            send_telemetry("🚨 TEHDİT ENGELLENDİ", f"Dosya: {filename}\nDurum: Karantinaya alındı.")
-            self.send_notification("🚫 ENGELLENDİ", f"{filename} karantinaya alındı.", sound=True)
-        except: pass
+            if malicious > 0:
+                self.watcher.quarantine_file(filepath)
+            else:
+                self.notifier.send_toast("✅ Safe", f"{filename} is clean.", active=self.watcher.is_active)
+                self.notifier.send_telemetry("✅ CLEAN FILE", f"File: {filename}")
+        except Exception as e:
+            logging.error(f"Error in VirusTotalScanner._evaluate_stats: {e}")
 
-class Handler(FileSystemEventHandler):
+
+class DirectoryEventHandler(FileSystemEventHandler):
     def __init__(self, watcher):
         self.watcher = watcher
         self.temp_exts = ('.tmp', '.crdownload', '.part', '.opdownload')
 
     def check(self, filepath):
         if not self.watcher.is_active: return
-        if os.path.basename(filepath).endswith(self.temp_exts + ('.ini', '.log', '.tmp')): return
+        if os.path.basename(filepath).endswith(self.temp_exts + ('.ini', '.log')): return
         threading.Thread(target=self.process, args=(filepath,), daemon=True).start()
 
     def on_created(self, event): 
         if not event.is_directory: self.check(event.src_path)
+        
     def on_modified(self, event):
         if not event.is_directory: self.check(event.src_path)
+        
     def on_moved(self, event):
-        if not event.is_directory and os.path.splitext(event.src_path)[1] in self.temp_exts: self.check(event.dest_path)
+        if not event.is_directory and os.path.splitext(event.src_path)[1] in self.temp_exts: 
+            self.check(event.dest_path)
 
     def process(self, filepath):
         filename = os.path.basename(filepath)
@@ -255,86 +258,198 @@ class Handler(FileSystemEventHandler):
             if not os.path.exists(filepath): return
             try:
                 size = os.path.getsize(filepath)
-                if size == 0: time.sleep(0.5); continue
-                if size == last_size: stable += 1
-                else: stable = 0
+                if size == 0: 
+                    time.sleep(0.5)
+                    continue
+                if size == last_size: 
+                    stable += 1
+                else: 
+                    stable = 0
                 last_size = size
                 if stable >= 2: break
                 time.sleep(0.5)
-            except: time.sleep(0.5)
+            except Exception as e:
+                logging.error(f"Error checking file size in process: {e}")
+                time.sleep(0.5)
 
-        self.watcher.send_notification("İnceleniyor...", f"{filename} kontrol ediliyor.")
-        f_hash = self.get_hash(filepath)
-        if f_hash: self.check_vt(f_hash, filepath)
+        self.watcher.notifier.send_toast("Scanning...", f"Checking {filename}.", active=self.watcher.is_active)
+        self.watcher.scanner.check_file(filepath)
 
-    def get_hash(self, filepath):
-        sha = hashlib.sha256()
+
+class DirectoryWatcher(threading.Thread):
+    def __init__(self, config: ConfigManager, notifier: NotificationService):
+        super().__init__()
+        self.config = config
+        self.notifier = notifier
+        self.scanner = VirusTotalScanner(config, notifier, self)
+        
+        self.observer = Observer()
+        self.processed_files = {} 
+        self.lock = threading.Lock()
+        self.running = True
+        self.is_active = True 
+        
+    def run(self):
+        event_handler = DirectoryEventHandler(self)
+        self.observer.schedule(event_handler, self.config.watch_directory, recursive=False)
+        self.observer.start()
+        logging.info(f"Started watching directory: {self.config.watch_directory}")
+        while self.running: 
+            time.sleep(1)
+        self.observer.stop()
+        self.observer.join()
+
+    def stop(self): 
+        self.running = False
+        logging.info("Stopping DirectoryWatcher.")
+
+    def toggle_protection(self):
+        self.is_active = not self.is_active
+        status = "ON" if self.is_active else "OFF"
+        self.notifier.send_toast("Protection Status", f"Protection is currently: {status}", active=True)
+        return self.is_active
+
+    def quarantine_file(self, filepath):
         try:
-            with open(filepath, "rb") as f:
-                for chunk in iter(lambda: f.read(65536), b""): sha.update(chunk)
-            return sha.hexdigest()
-        except: return None
+            filename = os.path.basename(filepath)
+            dest = os.path.join(self.config.quarantine_dir, filename + ".quarantine")
+            shutil.move(filepath, dest)
+            self.notifier.send_telemetry("🚨 THREAT BLOCKED", f"File: {filename}\nStatus: Moved to quarantine.")
+            self.notifier.send_toast("🚫 BLOCKED", f"{filename} has been quarantined.", sound=True, active=self.is_active)
+            logging.info(f"Quarantined malicious file: {filepath}")
+        except Exception as e:
+            logging.error(f"Error in DirectoryWatcher.quarantine_file: {e}")
 
-    def check_vt(self, f_hash, filepath):
-        filename = os.path.basename(filepath)
+
+class SentinelApp:
+    def __init__(self):
+        self.config = ConfigManager()
+        LoggerService.setup_logging(self.config.log_path)
+        self.notifier = NotificationService(self.config)
+        
+    def run(self):
+        if not self.config.vt_api_key:
+            self.run_setup_wizard()
+            self.config.load_env()
+
+        if not self.config.vt_api_key:
+            logging.error("No API key provided. Exiting.")
+            sys.exit()
+
+        self.watcher_thread = DirectoryWatcher(self.config, self.notifier)
+        self.watcher_thread.daemon = True
+        self.watcher_thread.start()
+        
         try:
-            resp = requests.get(f"{VT_BASE_URL}/files/{f_hash}", headers={'x-apikey': API_KEY})
-            if resp.status_code == 200:
-                self.alert(resp.json()['data']['attributes']['last_analysis_stats'], filepath)
-            elif resp.status_code == 404:
-                size = os.path.getsize(filepath)
-                if size > (MAX_FILE_SIZE_MB * 1024 * 1024):
-                    self.watcher.send_notification("Hata", "Dosya 32MB limitini aşıyor.", sound=True)
-                    send_telemetry("⚠️ BOYUT AŞILDI", f"Dosya: {filename}\nBoyut: {size/1024/1024:.2f} MB")
-                else:
-                    self.watcher.send_notification("Analiz Ediliyor", "Dosya sunucuya yükleniyor...")
-                    send_telemetry("📤 YÜKLENİYOR", f"Dosya: {filename}")
-                    self.upload(filepath)
-            elif resp.status_code == 401: send_telemetry("💀 API HATASI", "Key geçersiz.")
-        except: pass
+            self.setup_tray()
+        except KeyboardInterrupt:
+            self.watcher_thread.stop()
+            sys.exit()
+        except Exception as e:
+            logging.error(f"Error running SentinelApp: {e}")
+            self.watcher_thread.stop()
+            sys.exit()
 
-    def upload(self, filepath):
+    def run_setup_wizard(self):
+        def open_vt_signup(): 
+            webbrowser.open("https://www.virustotal.com/gui/join-us")
+            
+        def open_existing(root):
+            u = simpledialog.askstring("Account", "Enter your VirusTotal username:", parent=root)
+            if u: webbrowser.open(f"https://www.virustotal.com/gui/user/{u.strip()}/apikey")
+
+        root = tk.Tk()
+        root.title("Sentinel-VT Setup")
+        w, h = 550, 480
+        root.geometry(f"{w}x{h}+{int((root.winfo_screenwidth()-w)/2)}+{int((root.winfo_screenheight()-h)/2)}")
+        root.resizable(False, False)
+        
+        if os.path.exists(self.config.icon_path):
+            try: 
+                root.iconphoto(False, tk.PhotoImage(file=self.config.icon_path))
+            except Exception as e: 
+                logging.error(f"Could not load icon in setup wizard: {e}")
+
+        tk.Label(root, text="Sentinel-VT Activation", font=("Segoe UI", 16, "bold")).pack(pady=(20, 10))
+        tk.Label(root, text="For security, additional configurations (like Telegram tokens)\nmust be added manually to the .env file.", font=("Segoe UI", 9)).pack(pady=(0, 10))
+
+        f_btns = tk.Frame(root, pady=10)
+        f_btns.pack()
+        tk.Button(f_btns, text="Create New Account", bg="#3498db", fg="white", width=18, command=open_vt_signup).pack(side="left", padx=5)
+        tk.Button(f_btns, text="Open API Key Page", bg="#9b59b6", fg="white", width=18, command=lambda: open_existing(root)).pack(side="right", padx=5)
+
+        tk.Label(root, text="API Key:", font=("Segoe UI", 10, "bold")).pack(pady=(15, 5))
+        f_entry = tk.Frame(root)
+        f_entry.pack(pady=5)
+        entry_key = ttk.Entry(f_entry, width=45)
+        entry_key.pack(side="left", padx=(0, 5))
+        
+        def paste_key():
+            try:
+                content = root.clipboard_get().strip()
+                if len(content) >= 60: # typical VT API key length
+                    entry_key.delete(0, tk.END)
+                    entry_key.insert(0, content)
+                    btn_paste.config(text="✅ OK", bg="#27ae60")
+                else: 
+                    messagebox.showwarning("Error", "Clipboard content does not appear to be a valid API Key format.")
+            except Exception as e: 
+                logging.error(f"Error pasting key: {e}")
+                
+        btn_paste = tk.Button(f_entry, text="📋 Paste", bg="#e0e0e0", command=paste_key)
+        btn_paste.pack(side="right")
+
+        var_start = tk.IntVar(value=1)
+        tk.Checkbutton(root, text="Start automatically when Windows starts", variable=var_start).pack(pady=15)
+
+        def save():
+            k = entry_key.get().strip()
+            if len(k) < 60: 
+                messagebox.showerror("Error", "Invalid API Key!")
+                return
+            try:
+                with open(self.config.env_path, "a") as f: 
+                    f.write(f"\nVT_API_KEY={k}")
+                
+                if var_start.get(): 
+                    self.config.add_to_startup()
+                
+                self.config.load_env()
+                self.notifier.send_telemetry("🚀 SETUP COMPLETED", f"🔑 Key added.\n👤 User: {os.getlogin()}")
+                messagebox.showinfo("Success", "Setup complete! You can manage the app from the system tray.")
+                root.destroy()
+            except Exception as e: 
+                messagebox.showerror("Error", str(e))
+                logging.error(f"Error saving config: {e}")
+
+        tk.Button(root, text="SAVE AND START", bg="#2ecc71", fg="white", font=("Segoe UI", 10, "bold"), padx=20, pady=10, command=save).pack(pady=10)
+        root.protocol("WM_DELETE_WINDOW", sys.exit)
+        root.mainloop()
+
+    def setup_tray(self):
         try:
-            with open(filepath, 'rb') as f:
-                resp = requests.post(f"{VT_BASE_URL}/files", headers={'x-apikey': API_KEY}, files={'file': (os.path.basename(filepath), f)})
-            if resp.status_code == 200: 
-                analysis_id = resp.json()['data']['id']
-                for _ in range(60):
-                    time.sleep(5)
-                    r = requests.get(f"{VT_BASE_URL}/analyses/{analysis_id}", headers={'x-apikey': API_KEY})
-                    if r.status_code == 200 and r.json()['data']['attributes']['status'] == 'completed':
-                        self.alert(r.json()['data']['attributes']['stats'], filepath); return
-        except: pass
+            image = Image.open(self.config.icon_path)
+        except Exception as e:
+            logging.error(f"Failed to load tray icon: {e}")
+            image = Image.new('RGB', (64, 64), color = (73, 109, 137))
+            
+        def quit_action(icon, item):
+            icon.stop()
+            self.watcher_thread.stop()
+            sys.exit()
 
-    def alert(self, stats, filepath):
-        malicious = stats['malicious']
-        filename = os.path.basename(filepath)
-        if malicious > 0:
-            self.watcher.quarantine_file(filepath)
-        else:
-            self.watcher.send_notification("✅ Temiz", f"{filename} güvenli.")
-            # TEST BITINCE SIL:
-            send_telemetry("✅ TEMİZ DOSYA", f"Dosya: {filename}")
+        def toggle_protection_action(icon, item):
+            self.watcher_thread.toggle_protection()
 
-# --- SYSTEM TRAY ---
-def quit_action(icon, item):
-    icon.stop(); watcher_thread.stop(); sys.exit()
-
-def toggle_protection(icon, item):
-    watcher_thread.toggle_protection()
-
-def setup_tray():
-    image = Image.open(ICON_PATH)
-    menu = pystray.Menu(
-        pystray.MenuItem("Koruma Aktif", toggle_protection, checked=lambda item: watcher_thread.is_active),
-        pystray.MenuItem("Çıkış", quit_action)
-    )
-    icon = pystray.Icon("VirusDetect", image, "Virus Detect", menu)
-    icon.run()
+        menu = pystray.Menu(
+            pystray.MenuItem("Protection Active", toggle_protection_action, checked=lambda item: self.watcher_thread.is_active),
+            pystray.MenuItem("Exit", quit_action)
+        )
+        
+        icon = pystray.Icon("SentinelVT", image, "Sentinel-VT", menu)
+        self.notifier.icon_instance = icon # Register the icon for notifications
+        icon.run()
 
 if __name__ == '__main__':
-    watcher_thread = WatcherThread()
-    watcher_thread.daemon = True
-    watcher_thread.start()
-    try: setup_tray()
-    except KeyboardInterrupt: watcher_thread.stop(); sys.exit()
+    app = SentinelApp()
+    app.run()
