@@ -21,3 +21,8 @@ Karantina/
 # --- IDE AYARLARI ---
 .vscode/
 .idea/
+
+# --- MARKETING & SOCIALS ---
+LINKEDIN_POST.md
+medium_article.md
+marketing_assets.md
