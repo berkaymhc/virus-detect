@@ -50,7 +50,7 @@ graph TD
 
 3.  **Run Sentinel-VT:**
     ```bash
-    python sentinel.py
+    python src/sentinel.py
     ```
 
 ## 🛠️ Architecture
@@ -59,6 +59,7 @@ The codebase follows strict Object-Oriented Programming (OOP) standards:
 *   `ConfigManager`: Securely loads `.env` and manages application paths.
 *   `LoggerService`: Provides comprehensive logging for audits and debugging, avoiding silent failures.
 *   `NotificationService`: Handles cross-platform alert orchestration.
+*   `YaraScanner`: Executes offline signature-based threat detection.
 *   `VirusTotalScanner`: Encapsulates hashing, API communication, and response parsing.
 *   `DirectoryWatcher`: Threaded implementation of `watchdog` to monitor the `Downloads` directory safely without race conditions.
 

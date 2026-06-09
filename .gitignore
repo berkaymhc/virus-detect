@@ -7,6 +7,7 @@ __pycache__/
 # Sadece log dosyasini gizle, requirements.txt gorunsun
 sentinel_log.txt
 *.log
+error_log.txt
 
 # --- GEREKSIZ KLASORLER ---
 # EXE ciktilarini yukleme, sadece kaynak kod yuklenir
@@ -16,13 +17,13 @@ dist/
 
 # --- KARANTINA ---
 # Yakalanan virusleri GitHub'a yukleme!
-Karantina/
+Quarantine/
 
 # --- IDE AYARLARI ---
 .vscode/
 .idea/
 
 # --- MARKETING & SOCIALS ---
-LINKEDIN_POST.md
-medium_article.md
-marketing_assets.md
+docs/LINKEDIN_POST.md
+docs/medium_article.md
+docs/marketing_assets.md

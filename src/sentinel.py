@@ -46,12 +46,14 @@ class ConfigManager:
             # Load bundled icon from PyInstaller temp folder
             self.icon_path = os.path.join(sys._MEIPASS, 'logo.png')
         else:
-            self.base_dir = os.path.dirname(os.path.abspath(__file__))
+            self.src_dir = os.path.dirname(os.path.abspath(__file__))
+            self.base_dir = os.path.dirname(self.src_dir)
             self.exe_path = os.path.abspath(__file__)
-            self.icon_path = os.path.join(self.base_dir, 'logo.png')
+            self.icon_path = os.path.join(self.base_dir, 'assets', 'logo.png')
+            
         self.quarantine_dir = os.path.join(self.base_dir, 'Quarantine')
         self.env_path = os.path.join(self.base_dir, '.env')
-        self.rules_path = os.path.join(self.base_dir, 'rules.yar')
+        self.rules_path = os.path.join(self.base_dir, 'rules', 'rules.yar')
         self.log_path = os.path.join(self.base_dir, 'sentinel_log.txt')
         self.app_name = "Sentinel-VT"
         
