@@ -4,4 +4,5 @@ watchdog
 pywin32
 pystray
 Pillow
+yara-python
 pyinstaller

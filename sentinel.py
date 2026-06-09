@@ -20,6 +20,13 @@ from watchdog.events import FileSystemEventHandler
 import pystray
 from PIL import Image
 
+# --- YARA (OFFLINE ENGINE) ---
+try:
+    import yara
+    YARA_AVAILABLE = True
+except ImportError:
+    YARA_AVAILABLE = False
+
 # --- SINGLETON MUTEX ---
 try:
     from win32event import CreateMutex
@@ -36,13 +43,15 @@ class ConfigManager:
         if getattr(sys, 'frozen', False):
             self.base_dir = os.path.dirname(sys.executable)
             self.exe_path = sys.executable
+            # Load bundled icon from PyInstaller temp folder
+            self.icon_path = os.path.join(sys._MEIPASS, 'logo.png')
         else:
             self.base_dir = os.path.dirname(os.path.abspath(__file__))
             self.exe_path = os.path.abspath(__file__)
-
-        self.icon_path = os.path.join(self.base_dir, 'logo.png')
+            self.icon_path = os.path.join(self.base_dir, 'logo.png')
         self.quarantine_dir = os.path.join(self.base_dir, 'Quarantine')
         self.env_path = os.path.join(self.base_dir, '.env')
+        self.rules_path = os.path.join(self.base_dir, 'rules.yar')
         self.log_path = os.path.join(self.base_dir, 'sentinel_log.txt')
         self.app_name = "Sentinel-VT"
         
@@ -132,10 +141,43 @@ class NotificationService:
         logging.info(f"Notification: [{title}] {message}")
         if self.icon_instance:
             try:
-                # Use pystray's native OS notification
                 self.icon_instance.notify(message, title)
             except Exception as e:
                 logging.error(f"Error in NotificationService.send_toast (pystray): {e}")
+
+
+class YaraScanner:
+    def __init__(self, config: ConfigManager):
+        self.config = config
+        self.rules = None
+        self._load_rules()
+
+    def _load_rules(self):
+        if not YARA_AVAILABLE:
+            logging.warning("yara-python is not installed. Offline scanning is disabled.")
+            return
+
+        if not os.path.exists(self.config.rules_path):
+            logging.info(f"YARA rules file not found at: {self.config.rules_path}")
+            return
+
+        try:
+            self.rules = yara.compile(filepath=self.config.rules_path)
+            logging.info("YARA rules successfully loaded and compiled.")
+        except Exception as e:
+            logging.error(f"Error compiling YARA rules: {e}")
+
+    def scan(self, filepath):
+        if not self.rules:
+            return False, None
+        try:
+            matches = self.rules.match(filepath)
+            if matches:
+                return True, matches[0].rule
+            return False, None
+        except Exception as e:
+            logging.error(f"Error scanning file with YARA: {e}")
+            return False, None
 
 
 class VirusTotalScanner:
@@ -217,7 +259,7 @@ class VirusTotalScanner:
             malicious = stats.get('malicious', 0)
             filename = os.path.basename(filepath)
             if malicious > 0:
-                self.watcher.quarantine_file(filepath)
+                self.watcher.quarantine_file(filepath, reason="VirusTotal Malicious Verdict")
             else:
                 self.notifier.send_toast("✅ Safe", f"{filename} is clean.", active=self.watcher.is_active)
                 self.notifier.send_telemetry("✅ CLEAN FILE", f"File: {filename}")
@@ -273,6 +315,17 @@ class DirectoryEventHandler(FileSystemEventHandler):
                 time.sleep(0.5)
 
         self.watcher.notifier.send_toast("Scanning...", f"Checking {filename}.", active=self.watcher.is_active)
+        
+        # Step 1: Offline YARA check
+        logging.info(f"Scanning with YARA: {filename}")
+        is_virus, rule_name = self.watcher.local_scanner.scan(filepath)
+        if is_virus:
+            logging.warning(f"YARA Match: {rule_name} on file: {filename}")
+            self.watcher.quarantine_file(filepath, reason=f"YARA Rule: {rule_name}")
+            return
+            
+        # Step 2: Online VirusTotal check
+        logging.info(f"YARA clean. Querying VirusTotal: {filename}")
         self.watcher.scanner.check_file(filepath)
 
 
@@ -281,6 +334,7 @@ class DirectoryWatcher(threading.Thread):
         super().__init__()
         self.config = config
         self.notifier = notifier
+        self.local_scanner = YaraScanner(config)
         self.scanner = VirusTotalScanner(config, notifier, self)
         
         self.observer = Observer()
@@ -309,14 +363,17 @@ class DirectoryWatcher(threading.Thread):
         self.notifier.send_toast("Protection Status", f"Protection is currently: {status}", active=True)
         return self.is_active
 
-    def quarantine_file(self, filepath):
+    def quarantine_file(self, filepath, reason="Unknown"):
         try:
             filename = os.path.basename(filepath)
+            if os.path.exists(os.path.join(self.config.quarantine_dir, filename + ".quarantine")):
+                filename = f"{int(time.time())}_{filename}"
+                
             dest = os.path.join(self.config.quarantine_dir, filename + ".quarantine")
             shutil.move(filepath, dest)
-            self.notifier.send_telemetry("🚨 THREAT BLOCKED", f"File: {filename}\nStatus: Moved to quarantine.")
-            self.notifier.send_toast("🚫 BLOCKED", f"{filename} has been quarantined.", sound=True, active=self.is_active)
-            logging.info(f"Quarantined malicious file: {filepath}")
+            self.notifier.send_telemetry("🚨 THREAT BLOCKED", f"File: {filename}\nReason: {reason}\nStatus: Quarantined.")
+            self.notifier.send_toast("🚫 BLOCKED", f"{filename} blocked.\nReason: {reason}", sound=True, active=self.is_active)
+            logging.info(f"Quarantined malicious file: {filepath} (Reason: {reason})")
         except Exception as e:
             logging.error(f"Error in DirectoryWatcher.quarantine_file: {e}")
 
